@@ -1,0 +1,17 @@
+# Secrets / live config
+config/config.php
+
+# Database dumps (contain customer PII and admin password hashes)
+gtvpheud_games.sql
+
+# User-uploaded media (payment screenshots, etc. — may contain PII)
+assets/uploads/*
+!assets/uploads/.htaccess
+!assets/uploads/README.txt
+
+# Local agent / editor files
+.claude/
+
+# OS / editor cruft
+Thumbs.db
+.DS_Store

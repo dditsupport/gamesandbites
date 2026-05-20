@@ -1,0 +1,17 @@
+# Hide directory listings
+Options -Indexes
+
+# Default to index.php
+DirectoryIndex index.php index.html
+
+# Security headers
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Block access to sensitive files
+<FilesMatch "^(install\.sql|composer\.(json|lock)|\.env|\.git)">
+  Require all denied
+</FilesMatch>
