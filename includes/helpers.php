@@ -60,6 +60,35 @@ function slot_label(array $slot): string {
         . ' (' . $hours . 'h)';
 }
 
+/** Short date label like "Thu 21 May" for a Y-m-d date string */
+function fmt_date_short(string $date): string {
+    $ts = strtotime($date);
+    return $ts ? date('D j M', $ts) : $date;
+}
+
+/** Is booking disabled on this calendar date? */
+function is_date_blocked(PDO $pdo, string $date): bool {
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM blocked_dates WHERE block_date = ?");
+    $stmt->execute([$date]);
+    return ((int) $stmt->fetchColumn()) > 0;
+}
+
+/** Reason a date is blocked, or null if not blocked */
+function blocked_date_reason(PDO $pdo, string $date): ?string {
+    $stmt = $pdo->prepare("SELECT reason FROM blocked_dates WHERE block_date = ?");
+    $stmt->execute([$date]);
+    $row = $stmt->fetch();
+    if (!$row) return null;
+    return ($row['reason'] === null || $row['reason'] === '') ? '' : (string) $row['reason'];
+}
+
+/** Whether coupons may be applied to this slot on the given date's weekday */
+function slot_allows_coupon(array $slot, string $date): bool {
+    $p = day_prefix_for($date);
+    // Default to allowed if the column is missing (older schema)
+    return !array_key_exists($p . '_coupon', $slot) || !empty($slot[$p . '_coupon']);
+}
+
 /** Generate a short booking code like GNB-XK7Q4 */
 function generate_booking_code(): string {
     $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing 0/O/1/I
@@ -86,10 +115,30 @@ function normalize_mobile(string $raw): ?string {
     return $digits;
 }
 
-/** Check if a slot is already booked on a given date (pending or confirmed both block) */
+/** Minutes a UPI booking may hold a slot before payment is confirmed. */
+const SLOT_HOLD_MINUTES = 5;
+
+/**
+ * SQL boolean (for a WHERE clause) that is TRUE when a bookings row currently holds its slot.
+ * - Confirmed bookings always hold.
+ * - Pending bookings hold UNLESS they are unpaid UPI bookings older than the grace window
+ *   (no UTR and no screenshot submitted) — those auto-release so the slot frees up.
+ * - Cash bookings keep their hold (paid at the venue; admin manages them).
+ */
+function slot_hold_sql(): string {
+    $m = (int) SLOT_HOLD_MINUTES;
+    return "(status = 'confirmed' OR (status = 'pending' AND ("
+         . "payment_method <> 'upi' "
+         . "OR upi_utr IS NOT NULL "
+         . "OR upi_screenshot IS NOT NULL "
+         . "OR created_at >= (NOW() - INTERVAL $m MINUTE)"
+         . ")))";
+}
+
+/** Check if a slot currently holds a booking on a given date (see slot_hold_sql). */
 function is_slot_taken(PDO $pdo, int $slotId, string $date, ?int $excludeBookingId = null): bool {
     $sql = "SELECT COUNT(*) FROM bookings
-            WHERE slot_id = ? AND booking_date = ? AND status IN ('pending','confirmed')";
+            WHERE slot_id = ? AND booking_date = ? AND " . slot_hold_sql();
     $params = [$slotId, $date];
     if ($excludeBookingId !== null) {
         $sql .= " AND id != ?";

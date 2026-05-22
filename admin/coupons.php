@@ -184,4 +184,9 @@ require __DIR__ . '/_layout_top.php';
   </table>
 </div>
 
+<p class="muted small" style="margin-top:16px">
+  Tip: control <strong>which slots/weekdays accept coupons</strong> on the
+  <a href="slots.php">Slots &amp; Rates</a> page (per-slot, per-weekday).
+</p>
+
 <?php require __DIR__ . '/_layout_bottom.php'; ?>

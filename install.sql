@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS `admins` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Slot templates (apply to every day). end_time < start_time => crosses midnight.
+-- Slot templates. end_time < start_time => crosses midnight.
+-- Each weekday has its own enable flag, rate, and coupon-allowed flag.
 CREATE TABLE IF NOT EXISTS `slots` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `start_time` TIME NOT NULL,
@@ -22,6 +23,27 @@ CREATE TABLE IF NOT EXISTS `slots` (
   `is_active` TINYINT(1) NOT NULL DEFAULT 1,
   `sort_order` INT NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `mon_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `tue_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `wed_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `thu_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `fri_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `sat_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `sun_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `mon_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `tue_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `wed_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `thu_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `fri_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `sat_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `sun_rate` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `mon_coupon` TINYINT(1) NOT NULL DEFAULT 1,
+  `tue_coupon` TINYINT(1) NOT NULL DEFAULT 1,
+  `wed_coupon` TINYINT(1) NOT NULL DEFAULT 1,
+  `thu_coupon` TINYINT(1) NOT NULL DEFAULT 1,
+  `fri_coupon` TINYINT(1) NOT NULL DEFAULT 1,
+  `sat_coupon` TINYINT(1) NOT NULL DEFAULT 1,
+  `sun_coupon` TINYINT(1) NOT NULL DEFAULT 1,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -75,12 +97,21 @@ CREATE TABLE IF NOT EXISTS `settings` (
   PRIMARY KEY (`key_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Calendar dates with all bookings disabled (holidays, maintenance).
+CREATE TABLE IF NOT EXISTS `blocked_dates` (
+  `block_date` DATE NOT NULL,
+  `reason` VARCHAR(255) DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`block_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO `settings` (`key_name`,`value`) VALUES
   ('venue_name','Games N Bites'),
   ('venue_address','Nr. Nana Chiloda Ringroad Circle, Ranasan, Ahmedabad'),
   ('upi_id','yourname@upi'),
   ('upi_payee_name','Games N Bites'),
   ('upi_qr_image',''),
+  ('rules_image',''),
   ('advance_amount','500'),
   ('contact_phone',''),
   ('ntfy_topic',''),

@@ -25,6 +25,16 @@ $maxDate = date('Y-m-d', strtotime('+' . ($windowDays - 1) . ' days'));
 if ($selectedDate < $minDate) $selectedDate = $minDate;
 if ($selectedDate > $maxDate) $selectedDate = $maxDate;
 
+// Is booking disabled entirely for this date?
+$dateBlocked = is_date_blocked($pdo, $selectedDate);
+$blockReason = $dateBlocked ? blocked_date_reason($pdo, $selectedDate) : null;
+
+// Short date shown as a prefix on each slot's timing, e.g. "Thu 21 May"
+$datePrefix = fmt_date_short($selectedDate);
+
+// Rules image (admin-uploadable; falls back to the bundled file)
+$rulesImg = !empty($settings['rules_image']) ? $settings['rules_image'] : 'assets/rules.jpg';
+
 // Fetch active slots
 $allSlots = $pdo->query("SELECT * FROM slots WHERE is_active = 1 ORDER BY sort_order, start_time")->fetchAll();
 
@@ -38,13 +48,35 @@ foreach ($allSlots as $s) {
     }
 }
 
-// Find which are taken on the selected date
-$taken = [];
+// Find which slots are held on the selected date, split by lifecycle stage:
+//   confirmed                       -> "Booked" (+ customer name)
+//   pending + payment proof / cash  -> "Payment done · awaiting confirmation" (held)
+//   pending + no proof (UPI)        -> "In process" (auto-releases after the grace window)
+$booked = [];      // slot_id => customer name
+$awaiting = [];    // slot_id => 'paid' | 'cash'
+$inProcess = [];   // slot_id => true
 if ($slots) {
-    $stmt = $pdo->prepare("SELECT slot_id FROM bookings
-        WHERE booking_date = ? AND status IN ('pending','confirmed')");
+    $stmt = $pdo->prepare("SELECT slot_id, status, payment_method, customer_name,
+            (upi_utr IS NOT NULL OR upi_screenshot IS NOT NULL) AS has_proof
+        FROM bookings
+        WHERE booking_date = ? AND " . slot_hold_sql() . "
+        ORDER BY FIELD(status,'confirmed','pending')");
     $stmt->execute([$selectedDate]);
-    foreach ($stmt->fetchAll() as $r) $taken[(int)$r['slot_id']] = true;
+    foreach ($stmt->fetchAll() as $r) {
+        $sid = (int)$r['slot_id'];
+        if (isset($booked[$sid])) continue; // confirmed wins
+        if ($r['status'] === 'confirmed') {
+            $booked[$sid] = $r['customer_name'];
+            unset($awaiting[$sid], $inProcess[$sid]);
+        } elseif ($r['payment_method'] === 'cash' || !empty($r['has_proof'])) {
+            if (!isset($awaiting[$sid])) {
+                $awaiting[$sid] = !empty($r['has_proof']) ? 'paid' : 'cash';
+            }
+            unset($inProcess[$sid]);
+        } elseif (!isset($awaiting[$sid])) {
+            $inProcess[$sid] = true;
+        }
+    }
 }
 
 // Past-slot detection: only relevant when viewing TODAY.
@@ -72,7 +104,7 @@ if ($isToday && $slots) {
 <body class="customer">
 <header class="topbar">
   <div class="brand">
-    <span class="brand-mark">🏏</span>
+    <a href="index.php" class="brand-mark" title="Home" aria-label="Home" style="text-decoration:none">🏏</a>
     <div>
       <div class="brand-name"><?= e($settings['venue_name']) ?></div>
       <div class="brand-sub"><?= e($settings['venue_address']) ?></div>
@@ -80,9 +112,35 @@ if ($isToday && $slots) {
   </div>
 </header>
 
-<main class="container">
+<main class="container home-page">
   <?= render_flash() ?>
 
+  <div class="home-layout">
+    <!-- Left column: location map above the rules image -->
+    <div class="home-left">
+      <section class="card location-card">
+        <h2>📍 Find us — <?= e($settings['venue_name']) ?></h2>
+        <?php if (!empty($settings['venue_address'])): ?>
+          <p class="muted" style="margin-top:-4px"><?= e($settings['venue_address']) ?></p>
+        <?php endif; ?>
+        <div class="map-embed">
+          <iframe
+            src="https://maps.google.com/maps?q=Games%20n%27%20Bites%20Box%20Cricket%20and%20Party%20Lawn%2C%20Nana%20Chiloda%2C%20Ahmedabad&output=embed"
+            title="Map to <?= e($settings['venue_name']) ?>"
+            loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+        </div>
+        <a class="btn btn-secondary btn-sm" style="margin-top:12px"
+           href="https://share.google/ybcskuSpMhYfP1ZhF" target="_blank" rel="noopener">
+          Open in Google Maps / Get directions →
+        </a>
+      </section>
+
+      <section class="home-rules">
+        <img src="<?= e($rulesImg) ?>" alt="Games N Bites Box Cricket — Rules &amp; Regulations" class="rules-image">
+      </section>
+    </div>
+
+    <div class="home-booking">
   <section class="card">
     <h1>Book your slot</h1>
     <p class="muted">Pick a date, choose an available slot, pay <?= inr((float)$settings['advance_amount']) ?> advance to confirm. Bookings open for the next <?= (int)$windowDays ?> day<?= $windowDays > 1 ? 's' : '' ?>.</p>
@@ -100,7 +158,13 @@ if ($isToday && $slots) {
       <?php if ($isToday): ?> · Today<?php endif; ?>
     </div>
 
-    <?php if (empty($allSlots)): ?>
+    <?php if ($dateBlocked): ?>
+      <div class="empty-state">
+        <p><strong>Bookings are closed on <?= e(date('l, F j', strtotime($selectedDate))) ?>.</strong></p>
+        <?php if ($blockReason): ?><p class="muted"><?= e($blockReason) ?></p><?php endif; ?>
+        <p class="muted">Please pick another date.</p>
+      </div>
+    <?php elseif (empty($allSlots)): ?>
       <div class="empty-state">
         <p>No slots configured yet. Please check back soon.</p>
       </div>
@@ -111,27 +175,44 @@ if ($isToday && $slots) {
     <?php else: ?>
       <div class="slot-grid">
         <?php foreach ($slots as $slot):
-          $slotId  = (int)$slot['id'];
-          $isPast  = isset($past[$slotId]);
-          $isTaken = isset($taken[$slotId]);
+          $slotId   = (int)$slot['id'];
+          $isPast   = isset($past[$slotId]);
+          $bookedName = $booked[$slotId] ?? null;
+          $awaitKind  = ($bookedName === null && isset($awaiting[$slotId])) ? $awaiting[$slotId] : null;
+          $isInProcess = $bookedName === null && $awaitKind === null && isset($inProcess[$slotId]);
           $todayRate = (float)$slot['rate_today'];
         ?>
           <?php if ($isPast): ?>
             <div class="slot slot-past" aria-disabled="true">
-              <div class="slot-time"><?= e(slot_label($slot)) ?></div>
+              <div class="slot-time"><?= e($datePrefix) ?> · <?= e(slot_label($slot)) ?></div>
               <div class="slot-rate"><?= inr($todayRate) ?></div>
               <div class="slot-status">Past</div>
             </div>
-          <?php elseif ($isTaken): ?>
+          <?php elseif ($bookedName !== null): ?>
             <div class="slot slot-taken" aria-disabled="true">
-              <div class="slot-time"><?= e(slot_label($slot)) ?></div>
+              <div class="slot-time"><?= e($datePrefix) ?> · <?= e(slot_label($slot)) ?></div>
               <div class="slot-rate"><?= inr($todayRate) ?></div>
               <div class="slot-status">Booked</div>
+              <div class="slot-name">🏏 <?= e($bookedName) ?></div>
+            </div>
+          <?php elseif ($awaitKind !== null): ?>
+            <div class="slot slot-awaiting" aria-disabled="true">
+              <div class="slot-time"><?= e($datePrefix) ?> · <?= e(slot_label($slot)) ?></div>
+              <div class="slot-rate"><?= inr($todayRate) ?></div>
+              <div class="slot-status">
+                <?= $awaitKind === 'paid' ? 'Payment done · awaiting confirmation' : 'Reserved · awaiting confirmation' ?>
+              </div>
+            </div>
+          <?php elseif ($isInProcess): ?>
+            <div class="slot slot-pending" aria-disabled="true">
+              <div class="slot-time"><?= e($datePrefix) ?> · <?= e(slot_label($slot)) ?></div>
+              <div class="slot-rate"><?= inr($todayRate) ?></div>
+              <div class="slot-status">In process · try again in <?= (int)SLOT_HOLD_MINUTES ?> min</div>
             </div>
           <?php else: ?>
             <a class="slot slot-available"
                href="book.php?slot=<?= $slotId ?>&date=<?= e($selectedDate) ?>">
-              <div class="slot-time"><?= e(slot_label($slot)) ?></div>
+              <div class="slot-time"><?= e($datePrefix) ?> · <?= e(slot_label($slot)) ?></div>
               <div class="slot-rate"><?= inr($todayRate) ?></div>
               <div class="slot-status">Tap to book →</div>
             </a>
@@ -157,10 +238,8 @@ if ($isToday && $slots) {
       <p class="muted">Questions? Call <a href="tel:<?= e($settings['contact_phone']) ?>"><?= e($settings['contact_phone']) ?></a></p>
     <?php endif; ?>
   </section>
-
-  <section class="rules-section">
-    <img src="assets/rules.jpg" alt="Games N Bites Box Cricket — Rules & Regulations" class="rules-image">
-  </section>
+    </div><!-- /.home-booking -->
+  </div><!-- /.home-layout --><!-- left = map+rules, right = slots -->
 </main>
 
 <footer class="footer">

@@ -20,10 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $enabled = [];
     $rates = [];
+    $coupon = [];
     $anyEnabled = false;
     foreach (['mon','tue','wed','thu','fri','sat','sun'] as $d) {
         $enabled[$d] = isset($_POST[$d . '_enabled']) ? 1 : 0;
         $rates[$d]   = max(0, (float)($_POST[$d . '_rate'] ?? 0));
+        $coupon[$d]  = isset($_POST[$d . '_coupon']) ? 1 : 0;
         if ($enabled[$d]) $anyEnabled = true;
     }
 
@@ -51,7 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         mon_enabled = ?, tue_enabled = ?, wed_enabled = ?, thu_enabled = ?,
         fri_enabled = ?, sat_enabled = ?, sun_enabled = ?,
         mon_rate = ?, tue_rate = ?, wed_rate = ?, thu_rate = ?,
-        fri_rate = ?, sat_rate = ?, sun_rate = ?
+        fri_rate = ?, sat_rate = ?, sun_rate = ?,
+        mon_coupon = ?, tue_coupon = ?, wed_coupon = ?, thu_coupon = ?,
+        fri_coupon = ?, sat_coupon = ?, sun_coupon = ?
         WHERE id = ?");
     $stmt->execute([
         $sortOrder, $isActive, $maxRate,
@@ -59,6 +63,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $enabled['fri'], $enabled['sat'], $enabled['sun'],
         $rates['mon'], $rates['tue'], $rates['wed'], $rates['thu'],
         $rates['fri'], $rates['sat'], $rates['sun'],
+        $coupon['mon'], $coupon['tue'], $coupon['wed'], $coupon['thu'],
+        $coupon['fri'], $coupon['sat'], $coupon['sun'],
         $id,
     ]);
 
@@ -145,6 +151,21 @@ $days = [
                    value="<?= e(number_format((float)$slot[$key.'_rate'], 2, '.', '')) ?>">
           </div>
         </div>
+      <?php endforeach; ?>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Coupons</h2>
+    <p class="muted small">Tick the weekdays on which customers may apply a coupon to this slot. Unticked = no coupons accepted for this slot that day.</p>
+    <div class="day-grid">
+      <?php foreach ($days as $key => $label): ?>
+        <label class="day-row" style="cursor:pointer">
+          <input type="checkbox" name="<?= $key ?>_coupon"
+                 style="width:18px;height:18px;accent-color:var(--turf)"
+                 <?= !array_key_exists($key.'_coupon', $slot) || !empty($slot[$key.'_coupon']) ? 'checked' : '' ?>>
+          <span style="font-weight:600"><?= e($label) ?></span>
+        </label>
       <?php endforeach; ?>
     </div>
   </div>

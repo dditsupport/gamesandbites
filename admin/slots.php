@@ -12,6 +12,7 @@ if (($_GET['action'] ?? '') === 'export') {
         'start_time','end_time','sort_order','is_active',
         'mon_rate','tue_rate','wed_rate','thu_rate','fri_rate','sat_rate','sun_rate',
         'mon_enabled','tue_enabled','wed_enabled','thu_enabled','fri_enabled','sat_enabled','sun_enabled',
+        'mon_coupon','tue_coupon','wed_coupon','thu_coupon','fri_coupon','sat_coupon','sun_coupon',
     ]);
     while ($r = $stmt->fetch()) {
         fputcsv($out, [
@@ -23,6 +24,8 @@ if (($_GET['action'] ?? '') === 'export') {
             $r['fri_rate'], $r['sat_rate'], $r['sun_rate'],
             $r['mon_enabled'], $r['tue_enabled'], $r['wed_enabled'], $r['thu_enabled'],
             $r['fri_enabled'], $r['sat_enabled'], $r['sun_enabled'],
+            $r['mon_coupon'] ?? 1, $r['tue_coupon'] ?? 1, $r['wed_coupon'] ?? 1, $r['thu_coupon'] ?? 1,
+            $r['fri_coupon'] ?? 1, $r['sat_coupon'] ?? 1, $r['sun_coupon'] ?? 1,
         ]);
     }
     fclose($out);
@@ -90,6 +93,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('slots.php');
     }
 
+    if ($action === 'block_date') {
+        $bd = trim($_POST['block_date'] ?? '');
+        $reason = trim($_POST['reason'] ?? '');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $bd) || strtotime($bd) === false) {
+            flash_set('error', 'Pick a valid date to block.');
+        } elseif ($bd < date('Y-m-d')) {
+            flash_set('error', 'You can only block today or a future date.');
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO blocked_dates (block_date, reason) VALUES (?, ?)
+                ON DUPLICATE KEY UPDATE reason = VALUES(reason)");
+            $stmt->execute([$bd, $reason !== '' ? mb_substr($reason, 0, 255) : null]);
+            flash_set('success', 'Bookings disabled for ' . date('D, M j, Y', strtotime($bd)) . '.');
+        }
+        redirect('slots.php');
+    }
+
+    if ($action === 'unblock_date') {
+        $bd = trim($_POST['block_date'] ?? '');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $bd)) {
+            $stmt = $pdo->prepare("DELETE FROM blocked_dates WHERE block_date = ?");
+            $stmt->execute([$bd]);
+            flash_set('success', 'Bookings re-enabled for ' . date('D, M j, Y', strtotime($bd)) . '.');
+        }
+        redirect('slots.php');
+    }
+
     if ($action === 'import') {
         $mode = $_POST['import_mode'] ?? 'append';
         if (!in_array($mode, ['append','replace'], true)) $mode = 'append';
@@ -109,15 +138,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('slots.php');
         }
 
-        // Header row required — must match the Export CSV format exactly.
-        $first = fgetcsv($fh);
-        if (!$first) {
+        // Header row required — must match the Export CSV format.
+        // Detect the delimiter (Excel may save comma- OR semicolon-separated)
+        // and strip a UTF-8 BOM if present, so Excel-edited files import cleanly.
+        $firstLine = fgets($fh);
+        if ($firstLine === false || trim($firstLine) === '') {
             fclose($fh);
             flash_set('error', 'CSV is empty.');
             redirect('slots.php');
         }
+        $firstLine = preg_replace('/^\xEF\xBB\xBF/', '', $firstLine); // strip BOM
+        $firstLine = rtrim($firstLine, "\r\n");
+        $counts = [
+            ','  => substr_count($firstLine, ','),
+            ';'  => substr_count($firstLine, ';'),
+            "\t" => substr_count($firstLine, "\t"),
+        ];
+        arsort($counts);
+        $delim = array_key_first($counts);
+        if ($counts[$delim] === 0) $delim = ',';
+
+        $first = str_getcsv($firstLine, $delim);
         $headerMap = [];
-        foreach ($first as $i => $cell) $headerMap[strtolower(trim((string)$cell))] = $i;
+        foreach ($first as $i => $cell) {
+            $key = strtolower(trim((string)$cell, " \t\n\r\0\x0B\"\xEF\xBB\xBF"));
+            $headerMap[$key] = $i;
+        }
 
         $required = [
             'start_time','end_time','sort_order','is_active',
@@ -128,12 +174,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($missing) {
             fclose($fh);
             flash_set('error', 'CSV header is missing required columns: ' . implode(', ', $missing)
-                . '. Tip: click Export CSV, edit that file, then re-upload it.');
+                . '. Columns found: ' . (implode(', ', array_keys($headerMap)) ?: '(none)')
+                . '. Tip: click Export CSV, edit that file (keep the header row), then re-upload it.');
             redirect('slots.php');
         }
 
         $rows = []; $errors = []; $lineNo = 1;
-        while (($r = fgetcsv($fh)) !== false) {
+        while (($r = fgetcsv($fh, 0, $delim)) !== false) {
             $lineNo++;
             if (count(array_filter($r, fn($c) => trim((string)$c) !== '')) === 0) continue;
 
@@ -148,10 +195,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $sort   = (int)$get('sort_order');
             $active = (int)!!$get('is_active');
 
-            $rates = []; $enabled = [];
+            $rates = []; $enabled = []; $coupon = [];
             foreach (['mon','tue','wed','thu','fri','sat','sun'] as $d) {
                 $rates[$d]   = (float)$get($d.'_rate');
                 $enabled[$d] = (int)!!$get($d.'_enabled');
+                // Coupon columns are optional — default to allowed (1) if not present.
+                $coupon[$d]  = isset($headerMap[$d.'_coupon']) ? (int)!!$get($d.'_coupon') : 1;
             }
 
             $maxRate = max($rates);
@@ -161,7 +210,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $rows[] = [
                 'start' => $start, 'end' => $end, 'crosses' => $crosses,
                 'rate' => $maxRate, 'sort' => $sort, 'active' => $active,
-                'enabled' => $enabled, 'rates' => $rates,
+                'enabled' => $enabled, 'rates' => $rates, 'coupon' => $coupon,
             ];
         }
         fclose($fh);
@@ -191,8 +240,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $ins = $pdo->prepare("INSERT INTO slots
                 (start_time, end_time, crosses_midnight, rate, sort_order, is_active,
                  mon_enabled, tue_enabled, wed_enabled, thu_enabled, fri_enabled, sat_enabled, sun_enabled,
-                 mon_rate, tue_rate, wed_rate, thu_rate, fri_rate, sat_rate, sun_rate)
-                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?,?)");
+                 mon_rate, tue_rate, wed_rate, thu_rate, fri_rate, sat_rate, sun_rate,
+                 mon_coupon, tue_coupon, wed_coupon, thu_coupon, fri_coupon, sat_coupon, sun_coupon)
+                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?,?)");
 
             foreach ($rows as $r) {
                 $ins->execute([
@@ -201,6 +251,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $r['enabled']['thu'], $r['enabled']['fri'], $r['enabled']['sat'], $r['enabled']['sun'],
                     $r['rates']['mon'], $r['rates']['tue'], $r['rates']['wed'],
                     $r['rates']['thu'], $r['rates']['fri'], $r['rates']['sat'], $r['rates']['sun'],
+                    $r['coupon']['mon'], $r['coupon']['tue'], $r['coupon']['wed'],
+                    $r['coupon']['thu'], $r['coupon']['fri'], $r['coupon']['sat'], $r['coupon']['sun'],
                 ]);
             }
             $pdo->commit();
@@ -217,6 +269,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $slots = $pdo->query("SELECT * FROM slots ORDER BY sort_order, start_time")->fetchAll();
+
+// Upcoming blocked dates (today onward)
+$blockedDates = $pdo->query("SELECT block_date, reason FROM blocked_dates
+    WHERE block_date >= CURDATE() ORDER BY block_date")->fetchAll();
 
 require __DIR__ . '/_layout_top.php';
 ?>
@@ -268,12 +324,14 @@ require __DIR__ . '/_layout_top.php';
   <p class="muted small">
     Import accepts the same format Export produces. The header row is required and must contain:
     <code>start_time, end_time, sort_order, is_active, mon_rate … sun_rate, mon_enabled … sun_enabled</code>.
+    The <code>mon_coupon … sun_coupon</code> columns (1 = coupons allowed that weekday, 0 = not) are
+    <strong>optional</strong> — if omitted, coupons stay allowed on every day.
   </p>
   <details style="margin-bottom:12px">
     <summary style="cursor:pointer;color:var(--turf);font-weight:600">Example CSV</summary>
-    <pre style="background:#f4f6f8;padding:12px;border-radius:8px;font-size:12px;overflow:auto;margin-top:8px">start_time,end_time,sort_order,is_active,mon_rate,tue_rate,wed_rate,thu_rate,fri_rate,sat_rate,sun_rate,mon_enabled,tue_enabled,wed_enabled,thu_enabled,fri_enabled,sat_enabled,sun_enabled
-06:00,07:00,1,1,800,800,800,800,800,1000,1000,1,1,1,1,1,1,1
-21:00,23:00,16,1,1000,1000,1000,1000,1200,1500,1500,1,1,1,1,1,1,1</pre>
+    <pre style="background:#f4f6f8;padding:12px;border-radius:8px;font-size:12px;overflow:auto;margin-top:8px">start_time,end_time,sort_order,is_active,mon_rate,tue_rate,wed_rate,thu_rate,fri_rate,sat_rate,sun_rate,mon_enabled,tue_enabled,wed_enabled,thu_enabled,fri_enabled,sat_enabled,sun_enabled,mon_coupon,tue_coupon,wed_coupon,thu_coupon,fri_coupon,sat_coupon,sun_coupon
+06:00,07:00,1,1,800,800,800,800,800,1000,1000,1,1,1,1,1,1,1,1,1,1,1,1,0,0
+21:00,23:00,16,1,1000,1000,1000,1000,1200,1500,1500,1,1,1,1,1,1,1,1,1,1,1,1,1,1</pre>
   </details>
   <form method="post" enctype="multipart/form-data"
         onsubmit="var m=this.import_mode.value; if(m==='replace'){return confirm('Replace ALL existing slots? This cannot be undone.');} return true;">
@@ -298,6 +356,57 @@ require __DIR__ . '/_layout_top.php';
   </form>
 </div>
 
+<div class="card">
+  <h2>Block dates (close bookings)</h2>
+  <p class="muted small">
+    Disable <strong>all</strong> bookings on a specific date — holidays, private events, maintenance.
+    Customers see the date as closed and can't book any slot.
+  </p>
+  <form method="post">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="block_date">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end">
+      <div class="field" style="margin:0">
+        <label for="block_date">Date to close</label>
+        <input type="date" id="block_date" name="block_date" required min="<?= date('Y-m-d') ?>">
+      </div>
+      <div class="field" style="margin:0">
+        <label for="reason">Reason <small class="muted">(optional, shown to customers)</small></label>
+        <input type="text" id="reason" name="reason" maxlength="255" placeholder="e.g. Diwali holiday">
+      </div>
+      <div>
+        <button class="btn btn-primary btn-block">Close this date</button>
+      </div>
+    </div>
+  </form>
+
+  <?php if ($blockedDates): ?>
+    <table class="data" style="margin-top:16px">
+      <thead>
+        <tr><th>Closed date</th><th>Reason</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+      <?php foreach ($blockedDates as $bd): ?>
+        <tr>
+          <td><strong><?= e(date('D, M j, Y', strtotime($bd['block_date']))) ?></strong></td>
+          <td><?= $bd['reason'] !== null && $bd['reason'] !== '' ? e($bd['reason']) : '<span class="muted">—</span>' ?></td>
+          <td>
+            <form method="post" style="display:inline" onsubmit="return confirm('Re-enable bookings for this date?');">
+              <?= csrf_field() ?>
+              <input type="hidden" name="action" value="unblock_date">
+              <input type="hidden" name="block_date" value="<?= e($bd['block_date']) ?>">
+              <button class="btn btn-ghost btn-sm">Re-open</button>
+            </form>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  <?php else: ?>
+    <p class="muted small" style="margin-top:12px">No upcoming dates are blocked.</p>
+  <?php endif; ?>
+</div>
+
 <div class="table-wrap">
   <table class="data">
     <thead>
@@ -318,10 +427,14 @@ require __DIR__ . '/_layout_top.php';
     <?php foreach ($slots as $s):
       $rates = [];
       $enabledDays = [];
+      $noCouponDays = [];
       foreach (['mon','tue','wed','thu','fri','sat','sun'] as $d) {
         if (!empty($s[$d.'_enabled'])) {
           $rates[] = (float)$s[$d.'_rate'];
           $enabledDays[] = ucfirst($d);
+          if (array_key_exists($d.'_coupon', $s) && empty($s[$d.'_coupon'])) {
+            $noCouponDays[] = ucfirst($d);
+          }
         }
       }
       $rateMin = $rates ? min($rates) : 0;
@@ -339,6 +452,9 @@ require __DIR__ . '/_layout_top.php';
             <span style="color:var(--danger)">No days enabled</span>
           <?php else: ?>
             <span class="small"><?= e(implode(', ', $enabledDays)) ?></span>
+          <?php endif; ?>
+          <?php if ($noCouponDays): ?>
+            <br><small style="color:var(--danger)">No coupons: <?= e(implode(', ', $noCouponDays)) ?></small>
           <?php endif; ?>
         </td>
         <td>

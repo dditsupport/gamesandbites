@@ -3,6 +3,11 @@ config/config.php
 
 # Database dumps (contain customer PII and admin password hashes)
 gtvpheud_games.sql
+gtvpheud_games*.sql
+*.sql.gz
+# but keep schema/migration SQL that's part of the app
+!install.sql
+!migrations/*.sql
 
 # User-uploaded media (payment screenshots, etc. — may contain PII)
 assets/uploads/*

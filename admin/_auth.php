@@ -2,7 +2,7 @@
 require __DIR__ . '/../includes/bootstrap.php';
 
 if (empty($_SESSION['admin_id'])) {
-    redirect('login.php');
+    redirect('index.php');
 }
 
 // Re-fetch admin
@@ -11,7 +11,7 @@ $stmt->execute([$_SESSION['admin_id']]);
 $admin = $stmt->fetch();
 if (!$admin) {
     session_destroy();
-    redirect('login.php');
+    redirect('index.php');
 }
 
 $settings = get_settings($pdo);

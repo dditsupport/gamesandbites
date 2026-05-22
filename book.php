@@ -31,6 +31,14 @@ if ($date > $maxDate) {
     redirect('index.php');
 }
 
+// Admin may have disabled bookings entirely for this date
+if (is_date_blocked($pdo, $date)) {
+    $reason = blocked_date_reason($pdo, $date);
+    flash_set('error', 'Bookings are closed on ' . date('D, M j', strtotime($date))
+        . ($reason ? ' — ' . $reason : '') . '.');
+    redirect('index.php?date=' . urlencode($date));
+}
+
 $slot = null;
 if ($slotId > 0) {
     $stmt = $pdo->prepare("SELECT * FROM slots WHERE id = ? AND is_active = 1");
@@ -69,6 +77,9 @@ if ($slotRate <= 0) {
     redirect('index.php?date=' . urlencode($date));
 }
 
+// Whether coupons may be applied to this slot on this weekday (admin-controlled)
+$couponsAllowed = slot_allows_coupon($slot, $date);
+
 $errors = [];
 $old = ['name'=>'', 'mobile'=>'', 'payment_method'=>$enabledMethods[0], 'coupon_code'=>''];
 $couponMsg = null;
@@ -85,7 +96,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? 'place';
 
     if ($action === 'apply_coupon') {
-        if ($old['coupon_code'] === '') {
+        if (!$couponsAllowed) {
+            $couponMsg = ['type'=>'error', 'text'=>'Coupons can\'t be applied to this slot on ' . date('l', strtotime($date)) . 's.'];
+        } elseif ($old['coupon_code'] === '') {
             $couponMsg = ['type'=>'error', 'text'=>'Enter a coupon code.'];
         } else {
             $res = validate_coupon($pdo, $old['coupon_code'], $slotRate);
@@ -104,20 +117,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         // Place booking
         if ($old['coupon_code'] !== '') {
-            $res = validate_coupon($pdo, $old['coupon_code'], $slotRate);
-            if ($res['ok']) {
-                $appliedCoupon = $res['coupon'];
+            if (!$couponsAllowed) {
+                $errors['coupon_code'] = 'Coupons can\'t be applied to this slot on ' . date('l', strtotime($date)) . 's.';
             } else {
-                $errors['coupon_code'] = $res['error'];
+                $res = validate_coupon($pdo, $old['coupon_code'], $slotRate);
+                if ($res['ok']) {
+                    $appliedCoupon = $res['coupon'];
+                } else {
+                    $errors['coupon_code'] = $res['error'];
+                }
             }
         }
 
         if ($old['name'] === '' || mb_strlen($old['name']) < 2) {
             $errors['name'] = 'Please enter your name.';
+        } elseif (!preg_match('/^[A-Za-z ]+$/', $old['name'])) {
+            $errors['name'] = 'Name can contain letters and spaces only.';
         }
         $mobile = normalize_mobile($old['mobile']);
         if ($mobile === null) {
-            $errors['mobile'] = 'Enter a valid 10-digit Indian mobile number.';
+            $errors['mobile'] = 'Enter a valid 10-digit mobile number.';
         }
         if (!in_array($old['payment_method'], $enabledMethods, true)) {
             $errors['payment_method'] = 'Choose a valid payment method.';
@@ -244,6 +263,7 @@ $totalAfterDiscount = max(0, $slotRate - $discountAmount);
     </div>
   </section>
 
+  <?php if ($couponsAllowed): ?>
   <section class="card">
     <h2>Have a coupon?</h2>
     <form method="post" class="coupon-form">
@@ -283,10 +303,11 @@ $totalAfterDiscount = max(0, $slotRate - $discountAmount);
       <?php endif; ?>
     </form>
   </section>
+  <?php endif; ?>
 
   <section class="card">
     <h2>Your details</h2>
-    <form method="post" novalidate>
+    <form method="post">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="place">
       <input type="hidden" name="slot_id" value="<?= (int)$slotId ?>">
@@ -299,7 +320,9 @@ $totalAfterDiscount = max(0, $slotRate - $discountAmount);
         <label for="name">Full name</label>
         <input type="text" id="name" name="name" required maxlength="100"
                value="<?= e($old['name']) ?>"
-               placeholder="e.g. Mohit Motwani">
+               placeholder="e.g. Mohit Motwani"
+               pattern="[A-Za-z ]+" title="Letters and spaces only"
+               oninput="this.value=this.value.replace(/[^A-Za-z ]/g,'')">
         <?php if (!empty($errors['name'])): ?>
           <small class="err"><?= e($errors['name']) ?></small>
         <?php endif; ?>
@@ -309,7 +332,9 @@ $totalAfterDiscount = max(0, $slotRate - $discountAmount);
         <label for="mobile">Mobile number</label>
         <input type="tel" id="mobile" name="mobile" required
                value="<?= e($old['mobile']) ?>"
-               placeholder="10-digit number" inputmode="numeric" pattern="[0-9+ ]*">
+               placeholder="10-digit number" inputmode="numeric"
+               maxlength="10" pattern="[0-9]{10}" title="Exactly 10 digits, numbers only"
+               oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
         <?php if (!empty($errors['mobile'])): ?>
           <small class="err"><?= e($errors['mobile']) ?></small>
         <?php endif; ?>

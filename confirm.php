@@ -100,7 +100,7 @@ if ($booking['payment_method'] === 'upi' && !empty($settings['upi_id'])) {
 <body class="customer">
 <header class="topbar">
   <div class="brand">
-    <span class="brand-mark">🏏</span>
+    <a href="index.php" class="brand-mark" title="Home" aria-label="Home" style="text-decoration:none">🏏</a>
     <div>
       <div class="brand-name"><?= e($settings['venue_name']) ?></div>
       <div class="brand-sub">Booking <?= e($booking['booking_code']) ?></div>
@@ -163,6 +163,9 @@ if ($booking['payment_method'] === 'upi' && !empty($settings['upi_id'])) {
       <section class="card">
         <h2>Pay by UPI</h2>
         <p>Pay <strong><?= inr((float)$booking['advance_amount']) ?></strong> to <strong><?= e($settings['upi_id']) ?></strong></p>
+        <p class="muted small" style="color:var(--warning)">
+          ⏳ Please pay and submit proof within <?= (int)SLOT_HOLD_MINUTES ?> minutes, or this slot is automatically released for others.
+        </p>
 
         <?php if ($upiLink): ?>
           <a href="<?= e($upiLink) ?>" class="btn btn-primary btn-block">
@@ -191,7 +194,7 @@ if ($booking['payment_method'] === 'upi' && !empty($settings['upi_id'])) {
 
           <div class="field">
             <label for="screenshot">Payment screenshot <span class="muted">(JPG/PNG, max 5MB)</span></label>
-            <input type="file" id="screenshot" name="screenshot" accept="image/jpeg,image/png,image/webp">
+            <input type="file" id="screenshot" name="screenshot" accept="image/jpeg,image/png,image/webp" class="js-compress">
             <?php if (!empty($booking['upi_screenshot'])): ?>
               <small class="muted">Already uploaded — re-upload to replace.</small>
             <?php endif; ?>
@@ -213,5 +216,6 @@ if ($booking['payment_method'] === 'upi' && !empty($settings['upi_id'])) {
 <footer class="footer">
   <small>© <?= date('Y') ?> <?= e($settings['venue_name']) ?></small>
 </footer>
+<script src="assets/js/img-compress.js"></script>
 </body>
 </html>

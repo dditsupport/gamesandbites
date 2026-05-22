@@ -196,7 +196,7 @@ require __DIR__ . '/_layout_top.php';
     </div>
     <div class="field">
       <label>UPI QR code image (optional)</label>
-      <input type="file" name="upi_qr" accept="image/jpeg,image/png,image/webp">
+      <input type="file" name="upi_qr" accept="image/jpeg,image/png,image/webp" class="js-compress">
       <?php if (!empty($settings['upi_qr_image'])): ?>
         <div style="margin-top:8px">
           <img src="../<?= e($settings['upi_qr_image']) ?>" alt="Current QR" style="max-width:140px;border:1px solid var(--line);border-radius:6px;padding:4px;background:#fff">

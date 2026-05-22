@@ -62,7 +62,7 @@ booking/
 **If you're upgrading an older install** (already had bookings before coupon support was added), instead import `migrations/001_add_coupons.sql` to add only the new coupon tables/columns.
 
 ### 5. First login
-- Visit `https://yoursite.com/booking/admin/login.php`
+- Visit `https://yoursite.com/booking/admin/` (or `admin/index.php`)
 - Default credentials: `admin` / `admin123`
 - **Immediately go to Settings → Change admin password**
 

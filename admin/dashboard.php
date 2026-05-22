@@ -2,6 +2,45 @@
 require __DIR__ . '/_auth.php';
 $pageTitle = 'Dashboard';
 
+// Update the rules image shown on the customer booking page
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_rules_image') {
+    csrf_check();
+    if (empty($_FILES['rules_image']['tmp_name']) || $_FILES['rules_image']['error'] !== UPLOAD_ERR_OK) {
+        flash_set('error', 'Please choose an image to upload.');
+        redirect('dashboard.php');
+    }
+    $f = $_FILES['rules_image'];
+    if ($f['size'] > 5 * 1024 * 1024) {
+        flash_set('error', 'Image must be under 5 MB.');
+        redirect('dashboard.php');
+    }
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime  = $finfo->file($f['tmp_name']);
+    $allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    if (!isset($allowed[$mime])) {
+        flash_set('error', 'Upload a JPG, PNG, or WebP image.');
+        redirect('dashboard.php');
+    }
+    $ext   = $allowed[$mime];
+    $fname = 'rules_' . bin2hex(random_bytes(4)) . '.' . $ext;
+    $dest  = __DIR__ . '/../assets/uploads/' . $fname;
+    if (!move_uploaded_file($f['tmp_name'], $dest)) {
+        flash_set('error', 'Could not save image. Try again.');
+        redirect('dashboard.php');
+    }
+    $oldPath = get_settings($pdo)['rules_image'] ?? '';
+    set_setting($pdo, 'rules_image', 'assets/uploads/' . $fname);
+    // Clean up the previously uploaded rules image (never the bundled assets/rules.jpg)
+    if ($oldPath && str_starts_with($oldPath, 'assets/uploads/') && is_file(__DIR__ . '/../' . $oldPath)) {
+        @unlink(__DIR__ . '/../' . $oldPath);
+    }
+    flash_set('success', 'Rules image updated.');
+    redirect('dashboard.php');
+}
+
+// Current rules image (falls back to the bundled file)
+$rulesImg = !empty($settings['rules_image']) ? $settings['rules_image'] : 'assets/rules.jpg';
+
 // Stats
 $today = date('Y-m-d');
 $stats = [
@@ -96,6 +135,29 @@ require __DIR__ . '/_layout_top.php';
       <?php endforeach; ?>
     </tbody>
   </table>
+</div>
+
+<div class="card" style="margin-top:20px">
+  <h2 style="font-size:18px;margin-top:0">Rules image</h2>
+  <p class="muted small">This graphic shows on the customer booking page (left/bottom). Upload a new one to replace it — JPG, PNG, or WebP, max 5 MB.</p>
+  <div style="margin:12px 0">
+    <img src="../<?= e($rulesImg) ?>?t=<?= @filemtime(__DIR__ . '/../' . $rulesImg) ?>"
+         alt="Current rules image"
+         style="max-width:320px;width:100%;border:1px solid var(--line);border-radius:8px;display:block">
+  </div>
+  <form method="post" enctype="multipart/form-data">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="update_rules_image">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end">
+      <div class="field" style="margin:0">
+        <label for="rules_image">New rules image</label>
+        <input type="file" id="rules_image" name="rules_image" accept="image/jpeg,image/png,image/webp" class="js-compress" required>
+      </div>
+      <div>
+        <button class="btn btn-primary btn-block">↑ Update rules image</button>
+      </div>
+    </div>
+  </form>
 </div>
 
 <?php require __DIR__ . '/_layout_bottom.php'; ?>
