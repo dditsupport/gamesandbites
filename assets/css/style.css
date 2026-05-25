@@ -458,7 +458,8 @@ body.admin {
   background: #fff;
   border-radius: 10px;
   box-shadow: var(--shadow);
-  overflow: hidden;
+  overflow-x: auto;            /* allow horizontal scroll on narrow screens */
+  -webkit-overflow-scrolling: touch;
 }
 table.data {
   width: 100%;

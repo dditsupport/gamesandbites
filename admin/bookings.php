@@ -31,7 +31,7 @@ if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
 $sql = "SELECT b.*, s.start_time, s.end_time, s.crosses_midnight
         FROM bookings b JOIN slots s ON s.id = b.slot_id";
 if ($where) $sql .= ' WHERE ' . implode(' AND ', $where);
-$sql .= ' ORDER BY b.booking_date DESC, s.start_time DESC, b.created_at DESC LIMIT 200';
+$sql .= ' ORDER BY b.created_at DESC, b.id DESC LIMIT 200';
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $bookings = $stmt->fetchAll();
@@ -124,9 +124,12 @@ require __DIR__ . '/_layout_top.php';
           <?= e($b['customer_name']) ?><br>
           <small class="muted"><a href="tel:<?= e($b['customer_mobile']) ?>"><?= e($b['customer_mobile']) ?></a></small>
         </td>
-        <td>
-          <?= e(date('D, M j Y', strtotime($b['booking_date']))) ?><br>
+        <td style="white-space:nowrap">
+          <?= e(date('D, j M Y', strtotime($b['booking_date']))) ?><br>
           <small class="muted"><?= e(slot_label($slot)) ?></small>
+          <?php if (!empty($b['created_at'])): ?>
+            <br><small class="muted">Placed: <?= e(date('j M · g:i A', strtotime($b['created_at']))) ?></small>
+          <?php endif; ?>
         </td>
         <td>
           <?= strtoupper($b['payment_method']) ?><br>

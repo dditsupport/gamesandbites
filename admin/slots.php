@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'import') {
         $mode = $_POST['import_mode'] ?? 'append';
-        if (!in_array($mode, ['append','replace'], true)) $mode = 'append';
+        if (!in_array($mode, ['append','replace','update'], true)) $mode = 'append';
 
         if (empty($_FILES['csv_file']['tmp_name']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
             flash_set('error', 'Please choose a CSV file to upload.');
@@ -233,6 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        $updatedCount = 0; $insertedCount = 0;
         try {
             $pdo->beginTransaction();
             if ($mode === 'replace') $pdo->exec("DELETE FROM slots");
@@ -244,16 +245,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  mon_coupon, tue_coupon, wed_coupon, thu_coupon, fri_coupon, sat_coupon, sun_coupon)
                 VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?,?)");
 
+            // For 'update' mode: match an existing slot by its start+end time and
+            // update it in place (no deletes — safe even when bookings reference it).
+            $find = $pdo->prepare("SELECT id FROM slots WHERE start_time = ? AND end_time = ? LIMIT 1");
+            $upd  = $pdo->prepare("UPDATE slots SET
+                crosses_midnight=?, rate=?, sort_order=?, is_active=?,
+                mon_enabled=?, tue_enabled=?, wed_enabled=?, thu_enabled=?, fri_enabled=?, sat_enabled=?, sun_enabled=?,
+                mon_rate=?, tue_rate=?, wed_rate=?, thu_rate=?, fri_rate=?, sat_rate=?, sun_rate=?,
+                mon_coupon=?, tue_coupon=?, wed_coupon=?, thu_coupon=?, fri_coupon=?, sat_coupon=?, sun_coupon=?
+                WHERE id = ?");
+
             foreach ($rows as $r) {
-                $ins->execute([
-                    $r['start'], $r['end'], $r['crosses'], $r['rate'], $r['sort'], $r['active'],
-                    $r['enabled']['mon'], $r['enabled']['tue'], $r['enabled']['wed'],
-                    $r['enabled']['thu'], $r['enabled']['fri'], $r['enabled']['sat'], $r['enabled']['sun'],
-                    $r['rates']['mon'], $r['rates']['tue'], $r['rates']['wed'],
-                    $r['rates']['thu'], $r['rates']['fri'], $r['rates']['sat'], $r['rates']['sun'],
-                    $r['coupon']['mon'], $r['coupon']['tue'], $r['coupon']['wed'],
-                    $r['coupon']['thu'], $r['coupon']['fri'], $r['coupon']['sat'], $r['coupon']['sun'],
-                ]);
+                $existingId = null;
+                if ($mode === 'update') {
+                    $find->execute([$r['start'], $r['end']]);
+                    $existingId = $find->fetchColumn() ?: null;
+                }
+
+                if ($existingId) {
+                    $upd->execute([
+                        $r['crosses'], $r['rate'], $r['sort'], $r['active'],
+                        $r['enabled']['mon'], $r['enabled']['tue'], $r['enabled']['wed'],
+                        $r['enabled']['thu'], $r['enabled']['fri'], $r['enabled']['sat'], $r['enabled']['sun'],
+                        $r['rates']['mon'], $r['rates']['tue'], $r['rates']['wed'],
+                        $r['rates']['thu'], $r['rates']['fri'], $r['rates']['sat'], $r['rates']['sun'],
+                        $r['coupon']['mon'], $r['coupon']['tue'], $r['coupon']['wed'],
+                        $r['coupon']['thu'], $r['coupon']['fri'], $r['coupon']['sat'], $r['coupon']['sun'],
+                        $existingId,
+                    ]);
+                    $updatedCount++;
+                } else {
+                    $ins->execute([
+                        $r['start'], $r['end'], $r['crosses'], $r['rate'], $r['sort'], $r['active'],
+                        $r['enabled']['mon'], $r['enabled']['tue'], $r['enabled']['wed'],
+                        $r['enabled']['thu'], $r['enabled']['fri'], $r['enabled']['sat'], $r['enabled']['sun'],
+                        $r['rates']['mon'], $r['rates']['tue'], $r['rates']['wed'],
+                        $r['rates']['thu'], $r['rates']['fri'], $r['rates']['sat'], $r['rates']['sun'],
+                        $r['coupon']['mon'], $r['coupon']['tue'], $r['coupon']['wed'],
+                        $r['coupon']['thu'], $r['coupon']['fri'], $r['coupon']['sat'], $r['coupon']['sun'],
+                    ]);
+                    $insertedCount++;
+                }
             }
             $pdo->commit();
         } catch (Throwable $e) {
@@ -262,8 +294,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('slots.php');
         }
 
-        $modeLabel = $mode === 'replace' ? 'replaced all slots with' : 'added';
-        flash_set('success', "Imported successfully — $modeLabel " . count($rows) . " slot(s).");
+        if ($mode === 'update') {
+            flash_set('success', "Imported — updated $updatedCount existing slot(s)"
+                . ($insertedCount ? " and added $insertedCount new slot(s)." : "."));
+        } elseif ($mode === 'replace') {
+            flash_set('success', "Imported successfully — replaced all slots with $insertedCount slot(s).");
+        } else {
+            flash_set('success', "Imported successfully — added $insertedCount slot(s).");
+        }
         redirect('slots.php');
     }
 }
@@ -318,8 +356,10 @@ require __DIR__ . '/_layout_top.php';
   <h2>Import slots from CSV</h2>
   <p class="muted small">
     💡 Workflow: <a href="slots.php?action=export">Export CSV</a> → edit in Excel/Google Sheets → re-upload here.
-    Use <strong>Replace</strong> to overwrite all slots (blocked if any booking references an existing slot)
-    or <strong>Append</strong> to add new rows.
+    Use <strong>Update existing</strong> to change rates/days/coupons on slots you already have — it matches each
+    row to a slot by its start &amp; end time, updates it in place, and adds any new ones (works even when slots have
+    bookings). <strong>Append</strong> only adds new rows. <strong>Replace</strong> wipes all slots first (blocked
+    if any booking references an existing slot).
   </p>
   <p class="muted small">
     Import accepts the same format Export produces. The header row is required and must contain:
@@ -345,6 +385,7 @@ require __DIR__ . '/_layout_top.php';
       <div class="field" style="margin:0">
         <label for="import_mode">Mode</label>
         <select id="import_mode" name="import_mode">
+          <option value="update">Update existing (match by time — safe with bookings)</option>
           <option value="append">Append (add to existing)</option>
           <option value="replace">Replace (delete all, then import)</option>
         </select>

@@ -290,59 +290,128 @@ require __DIR__ . '/_layout_top.php';
     </form>
 
     <?php
-      // Build WhatsApp confirmation message
+      // Build WhatsApp message from the configured templates (confirm / cancel / pending).
       $waMobile = preg_replace('/\D+/', '', $b['customer_mobile']);
       if (strlen($waMobile) === 10) $waMobile = '91' . $waMobile; // assume India if no country code
 
-      $finalTotal = max(0, (float)$b['slot_rate'] - (float)$b['discount_amount'] - (float)$b['extra_discount']);
+      $finalTotal  = max(0, (float)$b['slot_rate'] - (float)$b['discount_amount'] - (float)$b['extra_discount']);
       $pendingPaid = (float)($b['pending_amount'] ?? 0);
-      $balance = max(0, $finalTotal - (float)$b['advance_amount'] - $pendingPaid);
+      $balance     = max(0, $finalTotal - (float)$b['advance_amount'] - $pendingPaid);
 
-      $lines = [];
+      // Slot duration line, e.g. "9:00 PM – 11:00 PM (2 Hours)"
+      $startStr = date('g:i A', strtotime($b['start_time']));
+      $endStr   = date('g:i A', strtotime($b['end_time']));
+      $sStart   = strtotime($b['start_time']);
+      $sEnd     = strtotime($b['end_time']);
+      $secs     = (!empty($b['crosses_midnight']) || $sEnd <= $sStart)
+                ? ((86400 - $sStart) + $sEnd)
+                : ($sEnd - $sStart);
+      $hours    = (int) round($secs / 3600);
+      $slotLine = "{$startStr} – {$endStr} ({$hours} Hour" . ($hours === 1 ? '' : 's') . ")";
+
+      $customerName = $b['customer_name'];
+      $bookingCode  = $b['booking_code'];
+      $dateLong     = date('l, j F Y', strtotime($b['booking_date'])); // "Friday, 22 May 2026"
+      $slotPriceF   = '₹' . number_format((float)$b['slot_rate'], 0);
+      $advanceF     = '₹' . number_format((float)$b['advance_amount'], 0);
+      $balanceF     = '₹' . number_format($balance, 0);
+
+      $venue        = $settings['venue_name'] ?: 'Games N Bites';
+      $venueUC      = mb_strtoupper($venue, 'UTF-8');
+      $contactPhone = $settings['contact_phone'] ?: '9898985677';
+      $locationLink = 'https://share.google/7xwXhfLwtDJVauC1v';
+      $website      = 'www.gamesnbites.com';
+
       if ($b['status'] === 'confirmed') {
-          $lines[] = "✅ Booking Confirmed — " . $settings['venue_name'];
+          $waMessage = <<<TXT
+✅ BOOKING CONFIRMED ✅
+🏏 {$venueUC} 🏏
+
+Hi {$customerName},
+
+🎟️ Booking ID: {$bookingCode}
+📅 Date: {$dateLong}
+⏰ Slot: {$slotLine}
+
+💰 Slot Price: {$slotPriceF}
+✅ Advance Paid: {$advanceF}
+💵 Balance Payable at Venue: {$balanceF} at the Time of Game Start
+
+📍 Please arrive 5 minutes early for a smooth start.
+
+━━━━━━━━━━━━━━━
+
+📢 IMPORTANT RULES & TERMS
+
+👥 Maximum 16 Players Allowed
+🏏 Box Strictly for Cricket Only
+🚭 No Smoking
+🍺 No Drinking
+⛔ No Food Allowed Inside the Box
+🚫 No Entry for Non-Players
+⏳ Slot Extension Available Only Subject to Availability
+⏰ Fixed Slot Timing — No Extra 5–10 Minutes Allowed
+🎯 Please Complete the Game Within Your Slot Time
+🚗 Parking at Owner's Risk
+⚠️ Management is Not Responsible for Any Injury, Theft, or Loss
+🎲 No Gambling Allowed
+
+🙏 All Teams Must Follow the Above Rules
+
+━━━━━━━━━━━━━━━
+
+📍 VENUE LOCATION
+{$venue} Box Cricket
+Nr Railway Bridge, Opp. Gappa Garden,
+Nr. Nana Chiloda Ringroad Circle,
+Ranasan, Ahmedabad
+
+📍 Location Link:
+{$locationLink}
+
+📞 Contact: {$contactPhone}
+🌐 {$website}
+
+🔥 PLAY • ENJOY • REPEAT 🔥
+TXT;
+          $btnLabel  = 'Send confirmation on WhatsApp';
+          $btnHint   = 'Sends the booking-confirmed template to ' . $b['customer_mobile'] . '.';
       } elseif ($b['status'] === 'cancelled') {
-          $lines[] = "❌ Booking Cancelled — " . $settings['venue_name'];
+          $waMessage = <<<TXT
+❌ BOOKING CANCELLED ❌
+🏏 {$venueUC} 🏏
+
+Dear {$customerName},
+
+Your booking has been cancelled due to one of the following reasons:
+
+• Advance Payment Not Received
+• Cancellation Requested by Party
+• Duplicate/Multiple Booking
+• Slot Unavailable
+• Violation of Booking Terms
+
+If you wish to book again, please contact us with full advance confirmation.
+
+📍 {$venue} Box Cricket
+📞 {$contactPhone}
+🌐 {$website}
+
+🙏 Thank You for Your Support
+🔥 PLAY • ENJOY • REPEAT 🔥
+TXT;
+          $btnLabel  = 'Send cancellation on WhatsApp';
+          $btnHint   = 'Sends the booking-cancelled template to ' . $b['customer_mobile'] . '.';
       } else {
-          $lines[] = "🏏 Booking Update — " . $settings['venue_name'];
-      }
-      $lines[] = "";
-      $lines[] = "Hi " . $b['customer_name'] . ",";
-      $lines[] = "";
-      $lines[] = "Booking ID: " . $b['booking_code'];
-      $lines[] = "Date: " . date('D, M j, Y', strtotime($b['booking_date']));
-      $lines[] = "Slot: " . slot_label($slot);
-      $lines[] = "";
-      $lines[] = "Slot price: ₹" . number_format((float)$b['slot_rate'], 2);
-      if ((float)$b['discount_amount'] > 0) {
-          $lines[] = "Coupon " . $b['coupon_code'] . ": -₹" . number_format((float)$b['discount_amount'], 2);
-      }
-      if ((float)$b['extra_discount'] > 0) {
-          $lines[] = "Discount: -₹" . number_format((float)$b['extra_discount'], 2);
-      }
-      $lines[] = "Total: ₹" . number_format($finalTotal, 2);
-      $lines[] = "Advance paid: ₹" . number_format((float)$b['advance_amount'], 2);
-      $lines[] = "Balance at venue: ₹" . number_format($balance, 2);
-      $lines[] = "";
-      if ($b['status'] === 'confirmed') {
-          $lines[] = "See you at the venue. Please arrive 10 mins early.";
-      } elseif ($b['status'] === 'cancelled') {
-          $lines[] = "Your booking has been cancelled.";
-          if (!empty($b['admin_note'])) {
-              $lines[] = "Note: " . $b['admin_note'];
-          }
-      } else {
-          $lines[] = "Your booking is being processed. We'll confirm shortly.";
-      }
-      if (!empty($settings['venue_address'])) {
-          $lines[] = "";
-          $lines[] = "📍 " . $settings['venue_address'];
-      }
-      if (!empty($settings['contact_phone'])) {
-          $lines[] = "📞 " . $settings['contact_phone'];
+          // Pending — brief acknowledgement until you confirm or cancel
+          $waMessage = "🏏 {$venueUC}\n\nHi {$customerName},\n\n"
+                     . "We've received your booking {$bookingCode} for {$dateLong}, {$slotLine}.\n"
+                     . "We'll confirm shortly after verifying your payment.\n\n"
+                     . "📞 {$contactPhone}";
+          $btnLabel  = 'Send received-update on WhatsApp';
+          $btnHint   = 'Sends a short acknowledgement. Confirm or cancel the booking to send the full template.';
       }
 
-      $waMessage = implode("\n", $lines);
       $waUrl = 'https://wa.me/' . $waMobile . '?text=' . rawurlencode($waMessage);
     ?>
 
@@ -352,11 +421,14 @@ require __DIR__ . '/_layout_top.php';
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px;margin-right:6px" aria-hidden="true">
           <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.263.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0 0 20.464 3.488"/>
         </svg>
-        Send confirmation on WhatsApp
+        <?= e($btnLabel) ?>
       </a>
-      <p class="muted small" style="margin:8px 0 0">
-        Opens WhatsApp with pre-filled message to <?= e($b['customer_mobile']) ?>. You tap send.
-      </p>
+      <p class="muted small" style="margin:8px 0 0"><?= e($btnHint) ?></p>
+      <details style="margin-top:10px">
+        <summary class="muted small" style="cursor:pointer">Preview / copy message</summary>
+        <textarea readonly rows="10"
+          style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:6px;font:13px/1.45 ui-monospace,Menlo,monospace;background:#fafbfc"><?= e($waMessage) ?></textarea>
+      </details>
     </div>
   </div>
 </div>

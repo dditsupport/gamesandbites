@@ -1,9 +1,11 @@
 <?php
 declare(strict_types=1);
 
-/** Escape HTML output */
+/** Escape HTML output. ENT_SUBSTITUTE prevents htmlspecialchars() from
+ *  returning an empty string when the input contains invalid UTF-8 bytes
+ *  (e.g. CSV content from an ANSI/UTF-16 file echoed back in an error). */
 function e(?string $s): string {
-    return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars($s ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 /** Load all settings as an associative array */
